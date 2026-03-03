@@ -37,6 +37,33 @@ def draw_ground(texture_id):
     glTexCoord2f(0, 5); glVertex3f(-25, -1,  25)
     glEnd()
     glDisable(GL_TEXTURE_2D)
+    
+def draw_skybox(texture_id):
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    glBegin(GL_QUADS)
+
+    # image is used one time (does not repeat like grass did) 
+    # front wall
+    glTexCoord2f(0, 0); glVertex3f(-25, -1, -25)
+    glTexCoord2f(1, 0); glVertex3f( 25, -1, -25)
+    glTexCoord2f(1, 1); glVertex3f( 25, 20, -25)
+    glTexCoord2f(0, 1); glVertex3f(-25, 20, -25)
+
+    # left wall
+    glTexCoord2f(0, 0); glVertex3f(-25, -1,  25)
+    glTexCoord2f(1, 0); glVertex3f(-25, -1, -25)
+    glTexCoord2f(1, 1); glVertex3f(-25, 20, -25)
+    glTexCoord2f(0, 1); glVertex3f(-25, 20,  25)
+
+    # right wall
+    glTexCoord2f(0, 0); glVertex3f( 25, -1, -25)
+    glTexCoord2f(1, 0); glVertex3f( 25, -1,  25)
+    glTexCoord2f(1, 1); glVertex3f( 25, 20,  25)
+    glTexCoord2f(0, 1); glVertex3f( 25, 20, -25)
+
+    glEnd()
+    glDisable(GL_TEXTURE_2D)
 
 def main():
     if not glfw.init():
@@ -51,6 +78,7 @@ def main():
     glEnable(GL_DEPTH_TEST) # the depth buffer stores z-values of fragments and discards them if they fail the depth testing
 
     grass_tex = load_texture("grass.jpg")
+    sky_tex = load_texture("sky.jpg")
 
     while not glfw.window_should_close(window):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # we need to clear the buffers or they will retain values from last frame
@@ -65,6 +93,7 @@ def main():
         glRotatef(20, 1, 0, 0) # rotates by 20 degrees on x axis so we can see the ground better
 
         draw_ground(grass_tex)
+        draw_skybox(sky_tex)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
