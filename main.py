@@ -31,10 +31,10 @@ def draw_ground(texture_id):
     glBindTexture(GL_TEXTURE_2D, texture_id)
     glBegin(GL_QUADS)
     # Mapping: (0,0) is bottom-left of image, (5,5) repeats it 5 times
-    glTexCoord2f(0, 0); glVertex3f(-25, -1, -25)
-    glTexCoord2f(5, 0); glVertex3f( 25, -1, -25)
-    glTexCoord2f(5, 5); glVertex3f( 25, -1,  25)
-    glTexCoord2f(0, 5); glVertex3f(-25, -1,  25)
+    glTexCoord2f(0, 5); glVertex3f(-25, -1, -25)
+    glTexCoord2f(5, 5); glVertex3f( 25, -1, -25)
+    glTexCoord2f(5, 0); glVertex3f( 25, -1,  25)
+    glTexCoord2f(0, 0); glVertex3f(-25, -1,  25)
     glEnd()
     glDisable(GL_TEXTURE_2D)
     
