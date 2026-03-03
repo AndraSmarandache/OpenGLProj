@@ -3,6 +3,7 @@ from OpenGL.GL import *
 from OpenGL.GLU import *
 from PIL import Image
 import os
+import math
 
 # helper function for loading texture
 def load_texture(path):
@@ -27,6 +28,7 @@ def load_texture(path):
     return tex_id
 
 def draw_ground(texture_id):
+    glColor3f(1.0, 1.0, 1.0) # reset colors
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
     glBegin(GL_QUADS)
@@ -39,6 +41,7 @@ def draw_ground(texture_id):
     glDisable(GL_TEXTURE_2D)
     
 def draw_skybox(texture_id):
+    glColor3f(1.0, 1.0, 1.0)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
     glBegin(GL_QUADS)
@@ -55,7 +58,7 @@ def draw_skybox(texture_id):
     glTexCoord2f(1, 0); glVertex3f(-25, -1, -25)
     glTexCoord2f(1, 1); glVertex3f(-25, 20, -25)
     glTexCoord2f(0, 1); glVertex3f(-25, 20,  25)
-
+    
     # right wall
     glTexCoord2f(0, 0); glVertex3f( 25, -1, -25)
     glTexCoord2f(1, 0); glVertex3f( 25, -1,  25)
@@ -63,6 +66,35 @@ def draw_skybox(texture_id):
     glTexCoord2f(0, 1); glVertex3f( 25, 20, -25)
 
     glEnd()
+    glDisable(GL_TEXTURE_2D)
+
+def draw_relief(texture_id):
+    glColor3f(1.0, 1.0, 1.0) 
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    
+    step = 0.5 # grid resolution
+    height_multiplier = 3 # height of the peaks
+    
+    # relief area is x from -5 to 5, and z from -10 to 0
+    x_range = [i * step for i in range(int(-5/step), int(5/step))]
+    z_range = [j * step for j in range(int(-10/step), int(0/step))]
+
+    for x in x_range:
+        glBegin(GL_TRIANGLE_STRIP)
+        for z in z_range:
+            # wave pattern is created by sin and cos
+            y1 = math.sin(x * 0.5) * math.cos(z * 0.5) * height_multiplier
+            y2 = math.sin((x + step) * 0.5) * math.cos(z * 0.5) * height_multiplier
+            
+            # texture coordinates; the division controls how many times the grass texture tiles
+            u1, v1 = x / 5.0, z / 5.0
+            u2, v2 = (x + step) / 5.0, z / 5.0
+
+            glTexCoord2f(u1, v1); glVertex3f(x, y1 - 0.5, z)
+            glTexCoord2f(u2, v2); glVertex3f(x + step, y2 - 0.5, z)
+        glEnd()
+    
     glDisable(GL_TEXTURE_2D)
 
 def main():
@@ -79,7 +111,7 @@ def main():
 
     grass_tex = load_texture("grass.jpg")
     sky_tex = load_texture("sky.jpg")
-
+    
     while not glfw.window_should_close(window):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # we need to clear the buffers or they will retain values from last frame
         
@@ -90,9 +122,10 @@ def main():
         glMatrixMode(GL_MODELVIEW) # applies matrix operations to the modelview matrix stack
         glLoadIdentity()
         glTranslatef(0, -2, -15) # moves the frame up by 2 units, and back by 15
-        glRotatef(20, 1, 0, 0) # rotates by 20 degrees on x axis so we can see the ground better
+        glRotatef(5, 1, 0, 0) # rotates on x axis so we can see the ground better
 
         draw_ground(grass_tex)
+        draw_relief(grass_tex)
         draw_skybox(sky_tex)
 
         glfw.swap_buffers(window)
