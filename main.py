@@ -66,6 +66,18 @@ def draw_skybox(texture_id):
     glTexCoord2f(1, 1); glVertex3f( 25, 20,  25)
     glTexCoord2f(0, 1); glVertex3f( 25, 20, -25)
 
+    # back wall
+    glTexCoord2f(0, 0); glVertex3f( 25, -1,  25)
+    glTexCoord2f(1, 0); glVertex3f(-25, -1,  25)
+    glTexCoord2f(1, 1); glVertex3f(-25, 20,  25)
+    glTexCoord2f(0, 1); glVertex3f( 25, 20,  25)
+
+    # top (ceiling)
+    glTexCoord2f(0, 0); glVertex3f(-25, 20, -25)
+    glTexCoord2f(1, 0); glVertex3f( 25, 20, -25)
+    glTexCoord2f(1, 1); glVertex3f( 25, 20,  25)
+    glTexCoord2f(0, 1); glVertex3f(-25, 20,  25)
+
     glEnd()
     glDisable(GL_TEXTURE_2D)
     
