@@ -27,6 +27,31 @@ def load_texture(path):
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, img.width, img.height, 0, GL_RGB, GL_UNSIGNED_BYTE, img_data) # sends raw pixels to GPU memory
     return tex_id
 
+# load heightmap - grayscale image where brightness = height (white = high, black = low)
+def load_heightmap(path):
+    if not os.path.exists(path):
+        print(f"Heightmap {path} not found; using procedural relief.")
+        return None
+    img = Image.open(path)
+    img = img.convert("L")  # lightness channel - grayscale
+    w, h = img.size[0], img.size[1]
+    data = list(img.getdata())
+    pixels = [data[row * w : (row + 1) * w] for row in range(h)] # save image coordinates in a matrix
+    return (w, h, pixels)
+
+def sample_heightmap(hm_width, hm_height, hm_pixels, u, v):
+    # u,v coordinates in [0,1]; image row 0 is top so v = 0 -> row h-1 (axis is inversed)
+    u = max(0, min(1, u))
+    v = max(0, min(1, v))
+    
+    col = int(u * (hm_width - 1) + 0.5) # transform u in a pixel coordinate
+    row = int((1 - v) * (hm_height - 1) + 0.5) # transform v (inversed) in a pixel coordinate
+    
+    row = max(0, min(hm_height - 1, row))
+    col = max(0, min(hm_width - 1, col))
+    
+    return hm_pixels[row][col] / 255.0  # [0..1]
+
 def draw_ground(texture_id):
     glColor3f(1.0, 1.0, 1.0) # reset colors
     glEnable(GL_TEXTURE_2D)
@@ -120,16 +145,20 @@ def _relief_normal(x, z, step, h_func):
         nx, ny, nz = nx/L, ny/L, nz/L # make arrow of length 1 (brightness is calculated by the dot product of the normal vector and light vector - they have be of length 1 so the result is just cos(angle))
     return (nx, ny, nz)
 
-def draw_relief(texture_id):
+def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0):
+    def height_mapped(x, z):
+        x_can = -5.0 + (x - x_min) / (x_max - x_min) * 10.0
+        z_can = -10.0 + (z - z_min) / (z_max - z_min) * 10.0
+        return terrain_height(x_can, z_can)
     glColor3f(1.0, 1.0, 1.0)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
     n_x, n_z = 36, 40 # how many squares (divisions) to make up the relief
-    x_min, x_max, z_min, z_max = -5.0, 5.0, -10.0, 0.0 # surface space for the relief
+    
     # steps necessary to cover the relief surface
     step_x = (x_max - x_min) / n_x # width
     step_z = (z_max - z_min) / n_z # length
-
+    
     for i in range(n_x): # for every width division (columns)
         x = x_min + i * step_x # x coordinate of left edge of the div
         x2 = x_min + (i + 1) * step_x # x coordinate of right edge of the div
@@ -139,12 +168,12 @@ def draw_relief(texture_id):
             z = z_min + j * step_z # current z coordinate
             
             # height: find the y for both edges of the strip; subtract 1 to align base of hill to ground level
-            y1 = -1.0 + terrain_height( x, z)
-            y2 = -1.0 + terrain_height(x2, z)
+            y1 = -1.0 + height_mapped(x, z)
+            y2 = -1.0 + height_mapped(x2, z)
             
             # lighting: calculate normal vector for correct shading
-            n1 = _relief_normal(x, z, step_x, terrain_height)
-            n2 = _relief_normal(x2, z, step_x, terrain_height)
+            n1 = _relief_normal(x, z, step_x, height_mapped)
+            n2 = _relief_normal(x2, z, step_x, height_mapped)
             
             # texture: convert to UV coordinates (0 to 1 scale), and multiply by 2 to repeat the texture so it doesn't look stretched
             u1 = (x - x_min) / (x_max - x_min) * 2
@@ -163,7 +192,46 @@ def draw_relief(texture_id):
             glNormal3f(*n1); glTexCoord2f(u1, v); glVertex3f(x, y1, z) # left point
             glNormal3f(*n2); glTexCoord2f(u2, v); glVertex3f(x2, y2, z) # right point
         glEnd() # finish the current column strip
+        
     glDisable(GL_TEXTURE_2D) # turn off texturing to not accidentally affect other objects 
+
+# relief from a heightmap image (grayscale: white = high, black = low) - logic similar to draw_relief
+def draw_relief_heightmap(hm_data, texture_id, height_scale = 3.0, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0):
+    hm_width, hm_height, hm_pixels = hm_data
+    n_x, n_z = 36, 40
+    step_x = (x_max - x_min) / n_x
+    step_z = (z_max - z_min) / n_z
+
+    def height_at(x, z):
+        u = (x - x_min) / (x_max - x_min)
+        v = (z - z_min) / (z_max - z_min)
+        return height_scale * sample_heightmap(hm_width, hm_height, hm_pixels, u, v)
+
+    glColor3f(1.0, 1.0, 1.0)
+    glEnable(GL_TEXTURE_2D)
+    glBindTexture(GL_TEXTURE_2D, texture_id)
+    for i in range(n_x):
+        x = x_min + i * step_x
+        x2 = x_min + (i + 1) * step_x
+        glBegin(GL_TRIANGLE_STRIP)
+        
+        for j in range(n_z + 1):
+            z = z_min + j * step_z
+            
+            y1 = -1.0 + height_at(x, z)
+            y2 = -1.0 + height_at(x2, z)
+            
+            n1 = _relief_normal(x, z, step_x, height_at)
+            n2 = _relief_normal(x2, z, step_x, height_at)
+            
+            u1 = (x - x_min) / (x_max - x_min) * 2
+            u2 = (x2 - x_min) / (x_max - x_min) * 2
+            v = (z - z_min) / (z_max - z_min) * 2
+            
+            glNormal3f(*n1); glTexCoord2f(u1, v); glVertex3f(x, y1, z)
+            glNormal3f(*n2); glTexCoord2f(u2, v); glVertex3f(x2, y2, z)
+        glEnd()
+    glDisable(GL_TEXTURE_2D)
 
 def main():
     if not glfw.init(): # initialize GLFW library
@@ -191,6 +259,8 @@ def main():
 
     grass_tex = load_texture("grass.jpg")
     sky_tex = load_texture("sky.jpg")
+    # try to load heightmap so we can show both reliefs when present
+    hm = load_heightmap("heightmap.jpg")
 
     while not glfw.window_should_close(window):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # we need to clear the buffers or they will retain values from last frame
@@ -211,7 +281,12 @@ def main():
         glDepthMask(GL_TRUE) # enable depth buffer for writing so that object can correctly overlap
 
         draw_ground(grass_tex)
-        draw_relief(grass_tex)
+        # when heightmap is present, show both – procedural left patch, heightmap right patch
+        if hm is not None:
+            draw_relief(grass_tex, -10.0, -1.0, -10.0, 0.0)
+            draw_relief_heightmap(hm, grass_tex, 2.5, 2.0, 10.0, -10.0, 0.0)
+        else:
+            draw_relief(grass_tex)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
