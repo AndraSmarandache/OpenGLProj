@@ -41,11 +41,15 @@ def _relief_normal(x, z, step, h_func):
         nx, ny, nz = nx/L, ny/L, nz/L # make arrow of length 1 (brightness is calculated by the dot product of the normal vector and light vector - they have be of length 1 so the result is just cos(angle))
     return (nx, ny, nz)
 
-def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0):
+def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0, inner_ellipse_rx = None, inner_ellipse_rz = None):
     def height_mapped(x, z):
         x_can = -5.0 + (x - x_min) / (x_max - x_min) * 10.0
         z_can = -10.0 + (z - z_min) / (z_max - z_min) * 10.0
-        return terrain_height(x_can, z_can)
+        h = terrain_height(x_can, z_can)
+        if inner_ellipse_rx is not None and inner_ellipse_rz is not None:
+            if (x / inner_ellipse_rx) ** 2 + (z / inner_ellipse_rz) ** 2 > 1:
+                h = 0.0
+        return h
     glColor3f(1.0, 1.0, 1.0)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
@@ -92,13 +96,16 @@ def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.
     glDisable(GL_TEXTURE_2D) # turn off texturing to not accidentally affect other objects 
 
 # relief from a heightmap image (grayscale: white = high, black = low) - logic similar to draw_relief
-def draw_relief_heightmap(hm_data, texture_id, height_scale = 3.0, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0):
+def draw_relief_heightmap(hm_data, texture_id, height_scale = 3.0, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0, outer_ellipse_rx = None, outer_ellipse_rz = None):
     hm_width, hm_height, hm_pixels = hm_data
     n_x, n_z = 36, 40
     step_x = (x_max - x_min) / n_x
     step_z = (z_max - z_min) / n_z
 
     def height_at(x, z):
+        if outer_ellipse_rx is not None and outer_ellipse_rz is not None:
+            if (x / outer_ellipse_rx) ** 2 + (z / outer_ellipse_rz) ** 2 <= 1:
+                return 0.0
         u = (x - x_min) / (x_max - x_min)
         v = (z - z_min) / (z_max - z_min)
         return height_scale * sample_heightmap(hm_width, hm_height, hm_pixels, u, v)
