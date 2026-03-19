@@ -1,23 +1,34 @@
 import math
 from OpenGL.GL import *
 
-def draw_ground(texture_id):
-    glColor3f(1.0, 1.0, 1.0) # reset colors
+# circular ground: no visible corners; mesh is a disk so the edge fades into fog at the horizon (industry standard)
+# radius chosen to sit inside the skybox sphere; texture tiles using world x,z for natural repetition
+def draw_ground(texture_id, radius=48.0, segments=64, tint=(1.0, 1.0, 1.0)):
+    glColor3f(*tint)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
-    glNormal3f(0, 1, 0) # normal faces up for lighting
-    glBegin(GL_QUADS)
-    # Mapping: (0,0) is bottom-left of image, (5,5) repeats it 5 times
-    glTexCoord2f(0, 5); glVertex3f(-25, -1, -25)
-    glTexCoord2f(5, 5); glVertex3f( 25, -1, -25)
-    glTexCoord2f(5, 0); glVertex3f( 25, -1,  25)
-    glTexCoord2f(0, 0); glVertex3f(-25, -1,  25)
+    glNormal3f(0, 1, 0)
+    # tile scale: more repeats = less stretched (e.g. 1/5 gives ~10 repeats over radius so grass/fronds look natural)
+    uv_scale = 1.0 / 5.0
+    glBegin(GL_TRIANGLE_FAN)
+    glTexCoord2f(0.5, 0.5)  # center of first texel for a smooth look at origin
+    glVertex3f(0, -1, 0)
+    for i in range(segments + 1):
+        t = 2 * math.pi * i / segments
+        x = radius * math.cos(t)
+        z = radius * math.sin(t)
+        u = x * uv_scale
+        v = z * uv_scale
+        glTexCoord2f(u, v)
+        glVertex3f(x, -1, z)
     glEnd()
     glDisable(GL_TEXTURE_2D)
 
 # sphere skybox: one texture wrapped around the inside of a sphere so there are no seams when you rotate
-# texture is equirectangular (360° panorama); u = horizontal angle (theta), v = vertical (phi from top)
+# texture is equirectangular (360 degrees panorama); u = horizontal angle (theta), v = vertical (phi from top)
+# lighting is disabled so the sky is always full brightness (otherwise the top of the sphere looks like a black cap)
 def draw_skybox(texture_id):
+    glDisable(GL_LIGHTING)
     glColor3f(1.0, 1.0, 1.0)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
@@ -41,3 +52,4 @@ def draw_skybox(texture_id):
         glEnd()
     glFrontFace(GL_CCW)  # restore default winding for the rest of the scene
     glDisable(GL_TEXTURE_2D)
+    glEnable(GL_LIGHTING)
