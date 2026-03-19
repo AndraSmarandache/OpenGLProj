@@ -9,6 +9,9 @@ from terrain import draw_relief
 
 ASSETS_DIR = "assets"
 
+# ground tint for night look (texture is multiplied by this; use (1,1,1) for day)
+GROUND_TINT = (0.22, 0.25, 0.38)  # dark blue-gray for starry sky
+
 # camera state (position and rotation) so we can move around the scene
 cam_x, cam_z = 0.0, -15.0
 cam_angle_y = 0.0
@@ -44,7 +47,7 @@ def main():
     sky_exr = os.path.join(ASSETS_DIR, "sky.exr")
     sky_tex = load_texture(sky_exr) if os.path.exists(sky_exr) else load_texture(os.path.join(ASSETS_DIR, "sky.jpg"))
 
-    global cam_x, cam_z, cam_angle_y
+    global cam_x, cam_z, cam_angle_y, cam_angle_x
     while not glfw.window_should_close(window):
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT) # we need to clear the buffers or they will retain values from last frame
         
@@ -64,6 +67,8 @@ def main():
         key_s = glfw.get_key(window, glfw.KEY_S)
         key_a = glfw.get_key(window, glfw.KEY_A)
         key_d = glfw.get_key(window, glfw.KEY_D)
+        key_q = glfw.get_key(window, glfw.KEY_Q)
+        key_e = glfw.get_key(window, glfw.KEY_E)
         # use both PRESS and REPEAT so holding a key keeps moving/turning every frame
         if key_w == glfw.PRESS or key_w == glfw.REPEAT:
             cam_x += math.sin(math.radians(cam_angle_y)) * move_speed
@@ -75,13 +80,27 @@ def main():
             cam_angle_y += turn_speed
         if key_d == glfw.PRESS or key_d == glfw.REPEAT:
             cam_angle_y -= turn_speed
+        if key_q == glfw.PRESS or key_q == glfw.REPEAT:
+            cam_angle_x -= turn_speed  # look up
+        if key_e == glfw.PRESS or key_e == glfw.REPEAT:
+            cam_angle_x += turn_speed  # look down
+        cam_angle_x = max(-85.0, min(85.0, cam_angle_x))  # clamp so we don't flip over
+        # keep camera inside the ground circle so we never see past the disk (weird view)
+        ground_radius = 48.0
+        cam_limit = ground_radius - 4.0
+        dist = math.sqrt(cam_x * cam_x + cam_z * cam_z)
+        if dist > cam_limit:
+            f = cam_limit / dist
+            cam_x *= f
+            cam_z *= f
 
         glDepthMask(GL_FALSE) # draw skybox first without writing depth (avoids z-fight at horizon)
         draw_skybox(sky_tex) # draw the skybox first so it stays 'behind'
         glDepthMask(GL_TRUE) # enable depth buffer for writing so that object can correctly overlap
 
-        draw_ground(grass_tex)
-        draw_relief(grass_tex, -7.0, 7.0, -5.0, 5.0)
+        draw_ground(grass_tex, tint=GROUND_TINT)
+        # relief covers most of the disk so the mini world is hills to the horizon, not a flat circle
+        draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
 
         glfw.swap_buffers(window)
         glfw.poll_events()

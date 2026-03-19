@@ -41,7 +41,8 @@ def _relief_normal(x, z, step, h_func):
         nx, ny, nz = nx/L, ny/L, nz/L # make arrow of length 1 (brightness is calculated by the dot product of the normal vector and light vector - they have be of length 1 so the result is just cos(angle))
     return (nx, ny, nz)
 
-def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0, inner_ellipse_rx = None, inner_ellipse_rz = None):
+def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.0, inner_ellipse_rx = None, inner_ellipse_rz = None, edge_fade = 10.0, tint=(1.0, 1.0, 1.0)):
+    # edge_fade: over this many units at the boundary, height blends to 0 so relief meets flat ground smoothly
     def height_mapped(x, z):
         x_can = -5.0 + (x - x_min) / (x_max - x_min) * 10.0
         z_can = -10.0 + (z - z_min) / (z_max - z_min) * 10.0
@@ -49,8 +50,15 @@ def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.
         if inner_ellipse_rx is not None and inner_ellipse_rz is not None:
             if (x / inner_ellipse_rx) ** 2 + (z / inner_ellipse_rz) ** 2 > 1:
                 h = 0.0
-        return h
-    glColor3f(1.0, 1.0, 1.0)
+        # smooth blend at rectangle edges so relief fades into the flat disk (no hard seam)
+        dist_x = min(x - x_min, x_max - x)
+        dist_z = min(z - z_min, z_max - z)
+        t_x = min(1.0, dist_x / edge_fade) if edge_fade > 0 else 1.0
+        t_z = min(1.0, dist_z / edge_fade) if edge_fade > 0 else 1.0
+        t_x = t_x * t_x * (3.0 - 2.0 * t_x)  # smoothstep
+        t_z = t_z * t_z * (3.0 - 2.0 * t_z)
+        return h * t_x * t_z
+    glColor3f(*tint)
     glEnable(GL_TEXTURE_2D)
     glBindTexture(GL_TEXTURE_2D, texture_id)
     n_x, n_z = 36, 40 # how many squares (divisions) to make up the relief
@@ -75,10 +83,11 @@ def draw_relief(texture_id, x_min = -5.0, x_max = 5.0, z_min = -10.0, z_max = 0.
             n1 = _relief_normal(x, z, step_x, height_mapped)
             n2 = _relief_normal(x2, z, step_x, height_mapped)
             
-            # texture: convert to UV coordinates (0 to 1 scale), and multiply by 2 to repeat the texture so it doesn't look stretched
-            u1 = (x - x_min) / (x_max - x_min) * 2
-            u2 = (x2 - x_min) / (x_max - x_min) * 2
-            v = (z - z_min) / (z_max - z_min) * 2
+            # texture: more repeats so grass/fronds aren't stretched on the relief
+            uv_repeats = 16.0
+            u1 = (x - x_min) / (x_max - x_min) * uv_repeats
+            u2 = (x2 - x_min) / (x_max - x_min) * uv_repeats
+            v = (z - z_min) / (z_max - z_min) * uv_repeats
             
             # drawing: send the normals, coords and 3D position to the GPU
             # this crates a 'zig-zag' pattern that fills the triag strip:  GL_TRIANGLE_STRIP connects the last 2 points so the new ones, creating 2 triangles
@@ -127,9 +136,10 @@ def draw_relief_heightmap(hm_data, texture_id, height_scale = 3.0, x_min = -5.0,
             n1 = _relief_normal(x, z, step_x, height_at)
             n2 = _relief_normal(x2, z, step_x, height_at)
             
-            u1 = (x - x_min) / (x_max - x_min) * 2
-            u2 = (x2 - x_min) / (x_max - x_min) * 2
-            v = (z - z_min) / (z_max - z_min) * 2
+            uv_repeats = 16.0
+            u1 = (x - x_min) / (x_max - x_min) * uv_repeats
+            u2 = (x2 - x_min) / (x_max - x_min) * uv_repeats
+            v = (z - z_min) / (z_max - z_min) * uv_repeats
             
             glNormal3f(*n1); glTexCoord2f(u1, v); glVertex3f(x, y1, z)
             glNormal3f(*n2); glTexCoord2f(u2, v); glVertex3f(x2, y2, z)
