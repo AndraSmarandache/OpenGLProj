@@ -4,13 +4,14 @@ import math
 from OpenGL.GL import *
 from OpenGL.GLU import *
 from textures import load_texture
-from scene import draw_ground, draw_skybox
+from scene import draw_ground, draw_skybox, draw_circuit
 from terrain import draw_relief
 
 ASSETS_DIR = "assets"
 
-# ground tint for night look (texture is multiplied by this; use (1,1,1) for day)
-GROUND_TINT = (0.22, 0.25, 0.38)  # dark blue-gray for starry sky
+# tint so ground and road matches night sky
+GROUND_TINT = (0.62, 0.62, 0.68)
+ROAD_TINT = (0.68, 0.68, 0.72)
 
 # camera state (position and rotation) so we can move around the scene
 cam_x, cam_z = 0.0, -15.0
@@ -39,11 +40,12 @@ def main():
     glEnable(GL_COLOR_MATERIAL) # briging that tells OpenGl to use colors from our textures
     glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
     
-    glLightfv(GL_LIGHT0, GL_POSITION, (1.0, 1.2, 0.8, 0.0)) # directional light from top-left (sun-like)
-    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.25, 0.25, 0.28, 1.0)) # ambient (the 'shadow' light): prevents unlit areas from being pitch black
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.85, 0.85, 0.82, 1.0)) # diffuse (the 'sunlight' color): 0.85 is a slightly warm white
+    glLightfv(GL_LIGHT0, GL_POSITION, (0.4, 1.0, 0.6, 0.0))  # directional: soft moon-style from above-front
+    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.08, 0.09, 0.12, 1.0))  # darker night fill light
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.28, 0.30, 0.38, 1.0))  # dimmer moon-like key so terrain reads as night
 
     grass_tex = load_texture(os.path.join(ASSETS_DIR, "grass.jpg"))
+    road_tex = load_texture(os.path.join(ASSETS_DIR, "road.jpg"))
     sky_exr = os.path.join(ASSETS_DIR, "sky.exr")
     sky_tex = load_texture(sky_exr) if os.path.exists(sky_exr) else load_texture(os.path.join(ASSETS_DIR, "sky.jpg"))
 
@@ -101,6 +103,8 @@ def main():
         draw_ground(grass_tex, tint=GROUND_TINT)
         # relief covers most of the disk so the mini world is hills to the horizon, not a flat circle
         draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
+        # flat oval trail on grass only (inner ellipse outside relief square)
+        draw_circuit(road_tex, rx_inner=34.0, rz_inner=30.0, road_width=4.0, tint=ROAD_TINT)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
