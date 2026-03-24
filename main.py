@@ -6,6 +6,7 @@ from OpenGL.GLU import *
 from textures import load_texture
 from scene import draw_ground, draw_skybox, draw_circuit
 from terrain import draw_relief
+from static_objects import draw_static_trees
 
 ASSETS_DIR = "assets"
 
@@ -105,6 +106,7 @@ def main():
         draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
         # flat oval trail on grass only (inner ellipse outside relief square)
         draw_circuit(road_tex, rx_inner=34.0, rz_inner=30.0, road_width=4.0, tint=ROAD_TINT)
+        draw_static_trees(ground_y=-1.0)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
