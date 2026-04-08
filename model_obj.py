@@ -6,22 +6,24 @@ from OpenGL.GL import *
 
 
 class SceneMesh:
-    __slots__ = ("vertices", "texcoords", "normals", "groups", "material_diffuse", "material_blend")
+    __slots__ = ("vertices", "texcoords", "normals", "groups", "material_diffuse", "material_kd", "material_blend")
 
-    def __init__(self, vertices, texcoords, normals, groups, material_diffuse, material_blend=None):
+    def __init__(self, vertices, texcoords, normals, groups, material_diffuse, material_kd=None, material_blend=None):
         self.vertices = vertices
         self.texcoords = texcoords
         self.normals = normals
         self.groups = groups
         self.material_diffuse = material_diffuse
+        self.material_kd = material_kd if material_kd is not None else {}
         self.material_blend = material_blend
 
 
 def load_mtl(mtl_path):
-    """Material name to absolute diffuse path (map_Kd) or None"""
+    """Material diffuse maps and Kd colors by material name"""
     if not mtl_path or not os.path.isfile(mtl_path):
-        return {}
+        return {}, {}
     mats = OrderedDict()
+    kd_by_mat = OrderedDict()
     current = None
     mtl_dir = os.path.dirname(os.path.abspath(mtl_path))
     with open(mtl_path, "r", encoding="utf-8", errors="ignore") as f:
@@ -37,12 +39,18 @@ def load_mtl(mtl_path):
                 current = " ".join(parts[1:]).strip()
                 if current:
                     mats[current] = None
+                    kd_by_mat[current] = None
+            elif key == "kd" and current is not None and current in mats and len(parts) >= 4:
+                try:
+                    kd_by_mat[current] = (float(parts[1]), float(parts[2]), float(parts[3]))
+                except ValueError:
+                    pass
             elif key == "map_kd" and current is not None and current in mats:
                 path_token = parts[-1].strip('"').replace("\\", os.sep)
                 if path_token:
                     full = path_token if os.path.isabs(path_token) else os.path.normpath(os.path.join(mtl_dir, path_token))
                     mats[current] = full
-    return mats
+    return mats, kd_by_mat
 
 
 def _parse_face_vert(chunk, nv, nt, nn):
@@ -71,8 +79,10 @@ def load_scene_mesh(obj_path):
     normals = []
     groups = OrderedDict()
     material_diffuse = OrderedDict()
+    material_kd = OrderedDict()
 
     mtl_maps = OrderedDict()
+    mtl_kd = OrderedDict()
     mtl_loaded = False
     current_mtl = "__default__"
     groups[current_mtl] = []
@@ -87,10 +97,12 @@ def load_scene_mesh(obj_path):
             if tag == "mtllib" and len(parts) >= 2:
                 mtl_name = " ".join(parts[1:]).strip('"')
                 mtl_path = os.path.normpath(os.path.join(obj_dir, mtl_name))
-                mtl_maps = load_mtl(mtl_path)
+                mtl_maps, mtl_kd = load_mtl(mtl_path)
                 mtl_loaded = True
                 material_diffuse.clear()
                 material_diffuse.update(mtl_maps)
+                material_kd.clear()
+                material_kd.update(mtl_kd)
             elif tag == "usemtl" and len(parts) >= 2:
                 current_mtl = " ".join(parts[1:]).strip()
                 if current_mtl not in groups:
@@ -138,7 +150,7 @@ def load_scene_mesh(obj_path):
     if not nonempty:
         return None
 
-    return SceneMesh(vertices, texcoords, normals, fixed_groups, material_diffuse)
+    return SceneMesh(vertices, texcoords, normals, fixed_groups, material_diffuse, material_kd)
 
 
 def normalize_scene_mesh(mesh, target_height=7.0):
@@ -158,6 +170,7 @@ def normalize_scene_mesh(mesh, target_height=7.0):
         mesh.normals,
         mesh.groups,
         mesh.material_diffuse,
+        getattr(mesh, "material_kd", None),
         getattr(mesh, "material_blend", None),
     )
 
@@ -193,6 +206,7 @@ def load_glb_scene_mesh(glb_path):
     normals = []
     groups = OrderedDict()
     material_diffuse = OrderedDict()
+    material_kd = OrderedDict()
     material_blend = OrderedDict()
     pil_by_material = OrderedDict()
 
@@ -241,6 +255,7 @@ def load_glb_scene_mesh(glb_path):
             )
         groups[mname] = tris
         material_diffuse[mname] = "__glb__"
+        material_kd[mname] = None
 
         pil_img = _white()
         blend = False
@@ -258,7 +273,7 @@ def load_glb_scene_mesh(glb_path):
         return None, {}
 
     return (
-        SceneMesh(vertices, texcoords, normals, groups, material_diffuse, material_blend),
+        SceneMesh(vertices, texcoords, normals, groups, material_diffuse, material_kd, material_blend),
         dict(pil_by_material),
     )
 
@@ -268,6 +283,11 @@ def _material_needs_blend(tex_path):
         return False
     low = tex_path.lower()
     return "twig" in low or "needle" in low or "leaf" in low
+
+
+def _material_is_glow(material_name):
+    low = (material_name or "").lower()
+    return "glow" in low or "emissive" in low or "light" in low
 
 
 def _tex_id_value(tid):
@@ -287,6 +307,7 @@ def draw_scene_mesh(
     translate_z,
     tint=(1.0, 1.0, 1.0),
     uniform_scale=1.0,
+    rotate_y_deg=0.0,
 ):
     if mesh is None:
         return
@@ -294,6 +315,9 @@ def draw_scene_mesh(
         material_to_texid = {}
     glPushMatrix()
     glTranslatef(translate_x, translate_y, translate_z)
+    ry = float(rotate_y_deg)
+    if abs(ry) > 1e-6:
+        glRotatef(ry, 0.0, 1.0, 0.0)
     s = float(uniform_scale)
     if abs(s - 1.0) > 1e-6:
         glScalef(s, s, s)
@@ -306,6 +330,7 @@ def draw_scene_mesh(
         tex_id = material_to_texid.get(mname, 0)
         tex_id = _tex_id_value(tex_id)
         path = mesh.material_diffuse.get(mname, "") or ""
+        is_glow = _material_is_glow(mname)
         mb = getattr(mesh, "material_blend", None) or {}
         if mname in mb:
             need_blend = mb[mname]
@@ -314,7 +339,28 @@ def draw_scene_mesh(
 
         if tex_id == 0:
             glDisable(GL_TEXTURE_2D)
-            glColor3f(tint[0] * 0.45 + 0.08, tint[1] * 0.55 + 0.12, tint[2] * 0.35 + 0.06)
+            kd_map = getattr(mesh, "material_kd", None) or {}
+            kd = kd_map.get(mname)
+            if kd is not None:
+                c = (
+                    max(0.0, min(1.0, kd[0] * tint[0])),
+                    max(0.0, min(1.0, kd[1] * tint[1])),
+                    max(0.0, min(1.0, kd[2] * tint[2])),
+                )
+            else:
+                c = (
+                    max(0.0, min(1.0, tint[0] * 0.62)),
+                    max(0.0, min(1.0, tint[1] * 0.62)),
+                    max(0.0, min(1.0, tint[2] * 0.62)),
+                )
+            if is_glow:
+                c = (
+                    max(c[0], 0.95),
+                    max(c[1], 0.80),
+                    max(c[2], 0.46),
+                )
+                glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.95, 0.72, 0.26, 1.0))
+            glColor3f(*c)
             glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.0, 0.0, 0.0, 1.0))
             glBegin(GL_TRIANGLES)
             for tri in tris:
@@ -327,9 +373,13 @@ def draw_scene_mesh(
                         glNormal3f(*default_n)
                     glVertex3f(x, y, z)
             glEnd()
+            if is_glow:
+                glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
             continue
 
         glColor3f(*tint)
+        if is_glow:
+            glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.95, 0.72, 0.26, 1.0))
         if need_blend:
             glEnable(GL_BLEND)
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
@@ -356,9 +406,12 @@ def draw_scene_mesh(
         if need_blend:
             glDisable(GL_BLEND)
         glDisable(GL_TEXTURE_2D)
+        if is_glow:
+            glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
 
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.0, 0.0, 0.0, 1.0))
     glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 0.0)
+    glMaterialfv(GL_FRONT_AND_BACK, GL_EMISSION, (0.0, 0.0, 0.0, 1.0))
     glColor3f(1.0, 1.0, 1.0)
     glPopMatrix()
 

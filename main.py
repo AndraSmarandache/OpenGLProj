@@ -1,33 +1,213 @@
-"""Night outdoor scene with GLFW, fixed pipeline, Pine.glb trees, and procedural fill"""
+﻿"""Night outdoor scene with modular camera, lighting, and benches"""
+
+import math
+import os
 
 import glfw
-import os
-import math
 from OpenGL.GL import *
 from OpenGL.GLU import *
-from textures import load_texture, load_texture_from_pil
-from model_obj import normalize_scene_mesh, load_glb_scene_mesh
-from scene import draw_ground, draw_skybox, draw_circuit
+
+from bench_system import compute_bench_positions, load_bench_scene
+from camera_controller import CameraConfig, CameraState, apply_camera_view, update_camera_from_input
+from lamp_effects import draw_lamp_beam_cone, draw_lamp_glow_orb, find_material_anchor_local
+from lighting_system import apply_active_lights, enforce_night_lighting_state, select_active_lamp_indices, setup_lamp_lights, setup_night_lighting
+from model_obj import draw_scene_mesh, load_glb_scene_mesh, load_scene_mesh, normalize_scene_mesh
+from scene import draw_circuit, draw_ground, draw_skybox
+from static_objects import TREE_SITES, draw_static_trees
 from terrain import draw_relief
-from static_objects import draw_static_trees, build_natural_tree_instances
+from textures import load_texture, load_texture_from_pil
 
 _ASSET_ROOT = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(_ASSET_ROOT, "assets")
 
-# Diffuse tints aligned with night sky and terrain
-GROUND_TINT = (0.62, 0.62, 0.68)
-ROAD_TINT = (0.68, 0.68, 0.72)
-TREE_MESH_TINT = (0.37, 0.39, 0.46)
-# Mesh height after normalization (world units)
-TREE_MESH_HEIGHT = 6.5
+GROUND_TINT = (0.36, 0.40, 0.46)
+ROAD_TINT = (0.40, 0.42, 0.49)
+TREE_MESH_TINT = (0.26, 0.30, 0.38)
+LAMP_POST_TINT = (0.50, 0.53, 0.60)
 
-cam_x, cam_z = 0.0, -15.0
-cam_angle_y = 0.0
-cam_angle_x = 5.0
-# Camera speed in world units and degrees per second (delta time)
-CAM_MOVE_UNITS_PER_SEC = 16.0
-CAM_TURN_DEG_PER_SEC = 150.0
-CAM_PITCH_DEG_PER_SEC = 120.0
+TREE_MESH_HEIGHT = 6.5
+LAMP_POST_HEIGHT = 8.2
+
+LAMP_LIGHTS_MAX = 4
+LAMP_LIGHT_HEIGHT = 6.6
+LAMP_LIGHT_DIFFUSE_STRENGTH = (10.5, 8.6, 5.2)
+LAMP_LIGHT_ATTENUATION_LINEAR = 0.022
+LAMP_LIGHT_ATTENUATION_QUAD = 0.0022
+LAMP_GLOW_Y_BIAS = 0.04
+# Wider real spotlight so the lit patch reaches the bench beside the pole
+LAMP_SPOT_CUTOFF_DEG = 38.0
+LAMP_SPOT_EXPONENT = 38.0
+# Soft rim on lamp shadow falloff in degrees
+LAMP_SHADOW_CONE_SOFT_DEG = 6.0
+# Skinny cone mesh only old style was 13 deg half angle from a 26 deg name
+LAMP_BEAM_VISUAL_HALF_DEG = 13.0
+LAMP_BEAM_END_Y = -0.985
+LAMP_BEAM_ALPHA_APEX = 0.22
+
+ENABLE_BENCH = True
+BENCH_HEIGHT = 2.4
+BENCH_TINT = (0.62, 0.47, 0.30)
+BENCH_GROUND_Y = -1.0
+BENCH_ASSET_DIR = "bench"
+BENCH_UNDER_ALL_LAMPS = False
+# Which poles have benches -> shorter list when you have fewer poles
+BENCH_LAMP_INDICES = [0, 3]
+BENCH_FALLBACK_POS = (0.0, 38.5)
+BENCH_YAW_OFFSET_DEG = 20
+BENCH_OFFSET_FROM_LAMP = 1.4
+
+# Same road height as scene.py draw_circuit
+ROAD_SURFACE_Y = -0.985
+# Keep in sync with GL_LIGHT0 moon from the left shadow slides toward +X not under the pole like lamp
+MOON_LIGHT_DIR = (-0.92, 0.38, 0.08)
+# Moon shadow a bit softer than lamp on purpose
+SHADOW_ALPHA_MOON = 0.44
+# Black so alpha blend actually reads as shadow brown tint looked washed out
+SHADOW_ALPHA_LAMP = 0.72
+LAMP_SHADOW_RGB = (0.0, 0.0, 0.0)
+
+
+def _shadow_plane_y_at(xz, road_rx_inner=34.0, road_rz_inner=30.0, road_width=4.0):
+    # Grass or road under the bench plus tiny nudge so z-fighting behaves
+    px, pz = xz
+    rx_o = road_rx_inner + road_width
+    rz_o = road_rz_inner + road_width
+    ei = (px / road_rx_inner) ** 2 + (pz / road_rz_inner) ** 2
+    eo = (px / rx_o) ** 2 + (pz / rz_o) ** 2
+    on_road = ei >= 1.0 and eo <= 1.0
+    base_y = ROAD_SURFACE_Y if on_road else BENCH_GROUND_Y
+    return base_y + 0.002
+
+
+def _lamp_spot_visibility_factor(lx, lamp_y, lz, px, py, pz, cutoff_deg, soft_deg=0.0):
+    # How much this point sits in the lamp cone 1 inside 0 out soft_deg blurs the edge
+    vx = px - lx
+    vy = py - lamp_y
+    vz = pz - lz
+    ln = math.sqrt(vx * vx + vy * vy + vz * vz)
+    if ln < 1e-8:
+        return 1.0
+    cos_ang = max(-1.0, min(1.0, (-vy) / ln))
+    if soft_deg <= 1e-6:
+        cos_cut = math.cos(math.radians(float(cutoff_deg)))
+        return 1.0 if cos_ang >= cos_cut else 0.0
+    c_in = math.cos(math.radians(float(max(0.0, cutoff_deg - soft_deg))))
+    c_out = math.cos(math.radians(float(cutoff_deg + soft_deg)))
+    if cos_ang >= c_in:
+        return 1.0
+    if cos_ang <= c_out:
+        return 0.0
+    return (cos_ang - c_out) / (c_in - c_out + 1e-8)
+
+
+def _project_mesh_to_plane_point(mesh, tx, ty, tz, light_pos, plane_y):
+    # Lamp as point each vertex projects along the ray through the bulb down to plane_y
+    lx, ly, lz = light_pos
+    out = []
+    for vx, vy, vz in mesh.vertices:
+        wx = vx + tx
+        wy = vy + ty
+        wz = vz + tz
+        denom = wy - ly
+        if abs(denom) < 1e-6:
+            t = 0.0
+        else:
+            t = (plane_y - ly) / denom
+        sx = lx + t * (wx - lx)
+        sz = lz + t * (wz - lz)
+        out.append((sx, plane_y, sz))
+    return out
+
+
+def _project_mesh_to_plane_directional(mesh, tx, ty, tz, light_dir, plane_y):
+    # Moon as parallel rays same direction for every vertex
+    dx, dy, dz = light_dir
+    ln = math.sqrt(dx * dx + dy * dy + dz * dz)
+    if ln < 1e-8:
+        dx, dy, dz = 0.0, 1.0, 0.0
+    else:
+        dx, dy, dz = dx / ln, dy / ln, dz / ln
+    out = []
+    for vx, vy, vz in mesh.vertices:
+        wx = vx + tx
+        wy = vy + ty
+        wz = vz + tz
+        # Rays travel from the moon so use minus the stored moon direction
+        if abs(dy) < 1e-6:
+            t = 0.0
+        else:
+            t = (plane_y - wy) / (-dy)
+        sx = wx + t * (-dx)
+        sz = wz + t * (-dz)
+        out.append((sx, plane_y, sz))
+    return out
+
+
+def _draw_projected_shadow(mesh, projected_vertices, rgba):
+    # Flat tint on the ground no lights no texture just alpha blend
+    if mesh is None or not projected_vertices:
+        return
+    glDisable(GL_LIGHTING)
+    glDisable(GL_TEXTURE_2D)
+    glShadeModel(GL_FLAT)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    raw_depth_func = glGetIntegerv(GL_DEPTH_FUNC)
+    try:
+        prev_depth_func = int(raw_depth_func[0])
+    except (TypeError, IndexError, ValueError):
+        prev_depth_func = int(raw_depth_func)
+    glDepthFunc(GL_LEQUAL)
+    glDepthMask(GL_FALSE)
+    glColor4f(rgba[0], rgba[1], rgba[2], rgba[3])
+    glBegin(GL_TRIANGLES)
+    for _mname, tris in mesh.groups.items():
+        for tri in tris:
+            for vi, _vti, _vni in tri:
+                sx, sy, sz = projected_vertices[vi]
+                glVertex3f(sx, sy, sz)
+    glEnd()
+    glDisable(GL_BLEND)
+    glDepthMask(GL_TRUE)
+    glDepthFunc(prev_depth_func)
+    glEnable(GL_LIGHTING)
+    glShadeModel(GL_SMOOTH)
+    glColor3f(1.0, 1.0, 1.0)
+
+
+def _draw_projected_lamp_shadow(mesh, projected_vertices, rgb, base_alpha, lamp_pos_3d, cutoff_deg, soft_deg):
+    # Same bench footprint alpha per vertex so cone edge does not chop the whole thing off
+    if mesh is None or not projected_vertices or base_alpha <= 1e-6:
+        return
+    lx, ly, lz = lamp_pos_3d
+    r, g, b = rgb[0], rgb[1], rgb[2]
+    glDisable(GL_LIGHTING)
+    glDisable(GL_TEXTURE_2D)
+    glShadeModel(GL_SMOOTH)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    raw_depth_func = glGetIntegerv(GL_DEPTH_FUNC)
+    try:
+        prev_depth_func = int(raw_depth_func[0])
+    except (TypeError, IndexError, ValueError):
+        prev_depth_func = int(raw_depth_func)
+    glDepthFunc(GL_LEQUAL)
+    glDepthMask(GL_FALSE)
+    glBegin(GL_TRIANGLES)
+    for _mname, tris in mesh.groups.items():
+        for tri in tris:
+            for vi, _vti, _vni in tri:
+                sx, sy, sz = projected_vertices[vi]
+                vis = _lamp_spot_visibility_factor(lx, ly, lz, sx, sy, sz, cutoff_deg, soft_deg=soft_deg)
+                glColor4f(r, g, b, float(base_alpha) * vis)
+                glVertex3f(sx, sy, sz)
+    glEnd()
+    glDisable(GL_BLEND)
+    glDepthMask(GL_TRUE)
+    glDepthFunc(prev_depth_func)
+    glEnable(GL_LIGHTING)
+    glShadeModel(GL_SMOOTH)
+    glColor3f(1.0, 1.0, 1.0)
 
 
 def main():
@@ -42,16 +222,8 @@ def main():
     glfw.make_context_current(window)
     glEnable(GL_DEPTH_TEST)
     glEnable(GL_NORMALIZE)
-
-    glEnable(GL_LIGHTING)
-    glEnable(GL_LIGHT0)
-    glEnable(GL_COLOR_MATERIAL)
-    glColorMaterial(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE)
-
-    # Directional moon fill with low ambient for night
-    glLightfv(GL_LIGHT0, GL_POSITION, (0.4, 1.0, 0.6, 0.0))
-    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.08, 0.09, 0.12, 1.0))
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.28, 0.30, 0.38, 1.0))
+    glClearColor(0.022, 0.028, 0.05, 1.0)
+    setup_night_lighting()
 
     grass_tex = load_texture(os.path.join(ASSETS_DIR, "grass.jpg"))
     road_tex = load_texture(os.path.join(ASSETS_DIR, "road.jpg"))
@@ -68,16 +240,86 @@ def main():
                 if tid:
                     pine_mat_tex[mname] = int(tid)
 
+    lamp_scene = None
+    lamp_mat_tex = {}
+    lamp_glow_anchor_local = None
+    lamp_obj = os.path.join(ASSETS_DIR, "d2fn4gudnri8-rv_Lamp_post4", "rv_lamp_post_4.obj")
+    if os.path.isfile(lamp_obj):
+        raw_lamp = load_scene_mesh(lamp_obj)
+        if raw_lamp is not None:
+            lamp_scene = normalize_scene_mesh(raw_lamp, target_height=LAMP_POST_HEIGHT)
+            lamp_glow_anchor_local = find_material_anchor_local(lamp_scene, "Lamppost_glow1SG")
+            for mname, tex_path in raw_lamp.material_diffuse.items():
+                if tex_path and os.path.isfile(tex_path):
+                    tid = load_texture(tex_path)
+                    if tid:
+                        lamp_mat_tex[mname] = int(tid)
+
+    bench_scene, bench_mat_tex = (None, {})
+    if ENABLE_BENCH:
+        bench_scene, bench_mat_tex = load_bench_scene(
+            ASSETS_DIR,
+            bench_asset_dir=BENCH_ASSET_DIR,
+            bench_height=BENCH_HEIGHT,
+        )
+
+    # Four posts N E W S less work than eight
+    lamp_positions = [
+        (0.0, 38.5),
+        (31.0, 0.0),
+        (-31.0, 0.0),
+        (0.0, -38.5),
+    ]
+    lamp_light_ids = [GL_LIGHT1, GL_LIGHT2, GL_LIGHT3, GL_LIGHT4]
+
+    bench_positions = compute_bench_positions(
+        lamp_positions,
+        bench_under_all_lamps=BENCH_UNDER_ALL_LAMPS,
+        bench_lamp_indices=BENCH_LAMP_INDICES,
+        fallback_pos=BENCH_FALLBACK_POS,
+        offset_from_lamp=BENCH_OFFSET_FROM_LAMP,
+    )
+
+    setup_lamp_lights(
+        lamp_light_ids,
+        diffuse_strength=LAMP_LIGHT_DIFFUSE_STRENGTH,
+        attenuation_linear=LAMP_LIGHT_ATTENUATION_LINEAR,
+        attenuation_quad=LAMP_LIGHT_ATTENUATION_QUAD,
+        spot_cutoff_deg=LAMP_SPOT_CUTOFF_DEG,
+        spot_exponent=LAMP_SPOT_EXPONENT,
+    )
+
     sky_exr = os.path.join(ASSETS_DIR, "sky.exr")
     sky_tex = load_texture(sky_exr) if os.path.exists(sky_exr) else load_texture(os.path.join(ASSETS_DIR, "sky.jpg"))
 
-    tree_instances = build_natural_tree_instances(
-        has_asset_mesh=pine_scene is not None,
-        n_range=(18, 30),
-    )
+    tree_instances = [
+        {
+            "x": tx,
+            "z": tz,
+            "kind": "mesh" if pine_scene is not None else "proc",
+            "mesh_scale": 0.95 + 0.04 * ((idx % 4) - 1),
+            "proc_scale": 0.92 + 0.03 * (idx % 3),
+            "tint_dim": 0.9,
+        }
+        for idx, (tx, tz) in enumerate(TREE_SITES)
+    ]
+    if len(lamp_positions) > 1:
+        lx, lz = lamp_positions[1]
+        tree_instances.append(
+            {
+                "x": lx + 2.2,
+                "z": lz - 2.0,
+                "kind": "proc",
+                "mesh_scale": 1.0,
+                "proc_scale": 1.28,
+                "tint_dim": 1.0,
+            }
+        )
 
-    global cam_x, cam_z, cam_angle_y, cam_angle_x
+    cam_cfg = CameraConfig()
+    cam_state = CameraState()
     last_t = glfw.get_time()
+
     while not glfw.window_should_close(window):
         now = glfw.get_time()
         dt = min(now - last_t, 0.1)
@@ -93,47 +335,23 @@ def main():
 
         glMatrixMode(GL_MODELVIEW)
         glLoadIdentity()
-        glTranslatef(0, -2, 0)
-        glRotatef(cam_angle_x, 1, 0, 0)
-        glRotatef(cam_angle_y, 0, 1, 0)
-        glTranslatef(-cam_x, 0, -cam_z)
+        apply_camera_view(cam_state, scene_y_offset=-2.0)
 
-        key_w = glfw.get_key(window, glfw.KEY_W)
-        key_s = glfw.get_key(window, glfw.KEY_S)
-        key_a = glfw.get_key(window, glfw.KEY_A)
-        key_d = glfw.get_key(window, glfw.KEY_D)
-        key_q = glfw.get_key(window, glfw.KEY_Q)
-        key_e = glfw.get_key(window, glfw.KEY_E)
-        m = CAM_MOVE_UNITS_PER_SEC * dt
-        tr = CAM_TURN_DEG_PER_SEC * dt
-        pr = CAM_PITCH_DEG_PER_SEC * dt
-        if key_w == glfw.PRESS or key_w == glfw.REPEAT:
-            cam_x += math.sin(math.radians(cam_angle_y)) * m
-            cam_z += math.cos(math.radians(cam_angle_y)) * m
-        if key_s == glfw.PRESS or key_s == glfw.REPEAT:
-            cam_x -= math.sin(math.radians(cam_angle_y)) * m
-            cam_z -= math.cos(math.radians(cam_angle_y)) * m
-        if key_a == glfw.PRESS or key_a == glfw.REPEAT:
-            cam_angle_y += tr
-        if key_d == glfw.PRESS or key_d == glfw.REPEAT:
-            cam_angle_y -= tr
-        if key_q == glfw.PRESS or key_q == glfw.REPEAT:
-            cam_angle_x -= pr
-        if key_e == glfw.PRESS or key_e == glfw.REPEAT:
-            cam_angle_x += pr
-        cam_angle_x = max(-85.0, min(85.0, cam_angle_x))
+        active_indices = select_active_lamp_indices(
+            cam_state.x,
+            cam_state.z,
+            lamp_positions,
+            LAMP_LIGHTS_MAX,
+            required_indices=BENCH_LAMP_INDICES if (ENABLE_BENCH and bench_scene is not None) else [],
+        )
+        apply_active_lights(lamp_light_ids, active_indices, lamp_positions, LAMP_LIGHT_HEIGHT)
 
-        ground_radius = 48.0
-        cam_limit = ground_radius - 4.0
-        dist = math.sqrt(cam_x * cam_x + cam_z * cam_z)
-        if dist > cam_limit:
-            f = cam_limit / dist
-            cam_x *= f
-            cam_z *= f
+        update_camera_from_input(window, dt, cam_state, cam_cfg)
 
         glDepthMask(GL_FALSE)
         draw_skybox(sky_tex)
         glDepthMask(GL_TRUE)
+        enforce_night_lighting_state()
 
         draw_ground(grass_tex, tint=GROUND_TINT)
         draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
@@ -145,6 +363,99 @@ def main():
             material_to_texid=pine_mat_tex if pine_scene else None,
             obj_tint=TREE_MESH_TINT,
         )
+
+        if ENABLE_BENCH and bench_scene is not None:
+            for bpx, bpz in bench_positions:
+                closest_lamp = min(
+                    lamp_positions,
+                    key=lambda p: (p[0] - bpx) ** 2 + (p[1] - bpz) ** 2,
+                )
+                lamp_pos_3d = (closest_lamp[0], LAMP_LIGHT_HEIGHT, closest_lamp[1])
+                bench_yaw = math.degrees(math.atan2(-bpx, -bpz)) + BENCH_YAW_OFFSET_DEG
+
+                # Rotate verts like draw_scene_mesh so shadow lines up with the model
+                ry = math.radians(bench_yaw)
+                cs = math.cos(ry)
+                sn = math.sin(ry)
+                rot_vertices = []
+                for vx, vy, vz in bench_scene.vertices:
+                    rx = vx * cs + vz * sn
+                    rz = -vx * sn + vz * cs
+                    rot_vertices.append((rx, vy, rz))
+
+                class _TmpMesh:
+                    pass
+
+                tmp_mesh = _TmpMesh()
+                tmp_mesh.vertices = rot_vertices
+                tmp_mesh.groups = bench_scene.groups
+
+                plane_y = _shadow_plane_y_at((bpx, bpz))
+                # Draw lamp planar shadow then moon both fake but cheap
+                lamp_shadow = _project_mesh_to_plane_point(
+                    tmp_mesh, bpx, BENCH_GROUND_Y, bpz, lamp_pos_3d, plane_y
+                )
+                _draw_projected_lamp_shadow(
+                    tmp_mesh,
+                    lamp_shadow,
+                    LAMP_SHADOW_RGB,
+                    SHADOW_ALPHA_LAMP,
+                    lamp_pos_3d,
+                    LAMP_SPOT_CUTOFF_DEG,
+                    LAMP_SHADOW_CONE_SOFT_DEG,
+                )
+
+                moon_shadow = _project_mesh_to_plane_directional(
+                    tmp_mesh, bpx, BENCH_GROUND_Y, bpz, MOON_LIGHT_DIR, plane_y
+                )
+                _draw_projected_shadow(tmp_mesh, moon_shadow, (0.0, 0.0, 0.0, SHADOW_ALPHA_MOON))
+
+                draw_scene_mesh(
+                    bench_scene,
+                    bench_mat_tex,
+                    bpx,
+                    BENCH_GROUND_Y,
+                    bpz,
+                    tint=BENCH_TINT,
+                    uniform_scale=1.0,
+                    rotate_y_deg=bench_yaw,
+                )
+
+        if lamp_scene is not None:
+            for lx, lz in lamp_positions:
+                draw_scene_mesh(
+                    lamp_scene,
+                    lamp_mat_tex,
+                    lx,
+                    -1.0,
+                    lz,
+                    tint=LAMP_POST_TINT,
+                    uniform_scale=1.0,
+                )
+                if lamp_glow_anchor_local is not None:
+                    ax, ay, az = lamp_glow_anchor_local
+                    lamp_glow_x = lx + ax
+                    lamp_glow_y = -1.0 + ay + LAMP_GLOW_Y_BIAS
+                    lamp_glow_z = lz + az
+                    draw_lamp_beam_cone(
+                        lamp_glow_x,
+                        lamp_glow_y,
+                        lamp_glow_z,
+                        LAMP_BEAM_END_Y,
+                        visual_half_angle_deg=LAMP_BEAM_VISUAL_HALF_DEG,
+                        alpha_apex=LAMP_BEAM_ALPHA_APEX,
+                    )
+                    draw_lamp_glow_orb(lamp_glow_x, lamp_glow_y, lamp_glow_z, radius=0.22)
+                else:
+                    draw_lamp_beam_cone(
+                        lx,
+                        LAMP_LIGHT_HEIGHT,
+                        lz,
+                        LAMP_BEAM_END_Y,
+                        visual_half_angle_deg=LAMP_BEAM_VISUAL_HALF_DEG,
+                        alpha_apex=LAMP_BEAM_ALPHA_APEX,
+                    )
+                    draw_lamp_glow_orb(lx, LAMP_LIGHT_HEIGHT, lz)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
