@@ -55,6 +55,8 @@ BENCH_LAMP_INDICES = [0, 3]
 BENCH_FALLBACK_POS = (0.0, 38.5)
 BENCH_YAW_OFFSET_DEG = 20
 BENCH_OFFSET_FROM_LAMP = 1.4
+MAX_TREE_INSTANCES = 6
+ENABLE_RELIEF = False
 
 # Same road height as scene.py draw_circuit
 ROAD_SURFACE_Y = -0.985
@@ -263,12 +265,10 @@ def main():
             bench_height=BENCH_HEIGHT,
         )
 
-    # Four posts N E W S less work than eight
+    # Two posts
     lamp_positions = [
         (0.0, 38.5),
         (31.0, 0.0),
-        (-31.0, 0.0),
-        (0.0, -38.5),
     ]
     lamp_light_ids = [GL_LIGHT1, GL_LIGHT2, GL_LIGHT3, GL_LIGHT4]
 
@@ -303,18 +303,53 @@ def main():
         }
         for idx, (tx, tz) in enumerate(TREE_SITES)
     ]
-    if len(lamp_positions) > 1:
-        lx, lz = lamp_positions[1]
-        tree_instances.append(
-            {
-                "x": lx + 2.2,
-                "z": lz - 2.0,
-                "kind": "proc",
-                "mesh_scale": 1.0,
-                "proc_scale": 1.28,
-                "tint_dim": 1.0,
-            }
-        )
+    tree_instances = tree_instances[:MAX_TREE_INSTANCES]
+
+    bench_draw_data = []
+    if ENABLE_BENCH and bench_scene is not None:
+        for bpx, bpz in bench_positions:
+            closest_lamp = min(
+                lamp_positions,
+                key=lambda p: (p[0] - bpx) ** 2 + (p[1] - bpz) ** 2,
+            )
+            lamp_pos_3d = (closest_lamp[0], LAMP_LIGHT_HEIGHT, closest_lamp[1])
+            bench_yaw = math.degrees(math.atan2(-bpx, -bpz)) + BENCH_YAW_OFFSET_DEG
+
+            # Rotate vertices one time instead of every frame
+            ry = math.radians(bench_yaw)
+            cs = math.cos(ry)
+            sn = math.sin(ry)
+            rot_vertices = []
+            for vx, vy, vz in bench_scene.vertices:
+                rx = vx * cs + vz * sn
+                rz = -vx * sn + vz * cs
+                rot_vertices.append((rx, vy, rz))
+
+            class _TmpMesh:
+                pass
+
+            tmp_mesh = _TmpMesh()
+            tmp_mesh.vertices = rot_vertices
+            tmp_mesh.groups = bench_scene.groups
+
+            plane_y = _shadow_plane_y_at((bpx, bpz))
+            lamp_shadow = _project_mesh_to_plane_point(
+                tmp_mesh, bpx, BENCH_GROUND_Y, bpz, lamp_pos_3d, plane_y
+            )
+            moon_shadow = _project_mesh_to_plane_directional(
+                tmp_mesh, bpx, BENCH_GROUND_Y, bpz, MOON_LIGHT_DIR, plane_y
+            )
+            bench_draw_data.append(
+                {
+                    "x": bpx,
+                    "z": bpz,
+                    "yaw": bench_yaw,
+                    "tmp_mesh": tmp_mesh,
+                    "lamp_shadow": lamp_shadow,
+                    "moon_shadow": moon_shadow,
+                    "lamp_pos_3d": lamp_pos_3d,
+                }
+            )
 
     cam_cfg = CameraConfig()
     cam_state = CameraState()
@@ -354,7 +389,8 @@ def main():
         enforce_night_lighting_state()
 
         draw_ground(grass_tex, tint=GROUND_TINT)
-        draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
+        if ENABLE_RELIEF:
+            draw_relief(grass_tex, -22.0, 22.0, -22.0, 22.0, tint=GROUND_TINT)
         draw_circuit(road_tex, rx_inner=34.0, rz_inner=30.0, road_width=4.0, tint=ROAD_TINT)
         draw_static_trees(
             ground_y=-1.0,
@@ -365,36 +401,15 @@ def main():
         )
 
         if ENABLE_BENCH and bench_scene is not None:
-            for bpx, bpz in bench_positions:
-                closest_lamp = min(
-                    lamp_positions,
-                    key=lambda p: (p[0] - bpx) ** 2 + (p[1] - bpz) ** 2,
-                )
-                lamp_pos_3d = (closest_lamp[0], LAMP_LIGHT_HEIGHT, closest_lamp[1])
-                bench_yaw = math.degrees(math.atan2(-bpx, -bpz)) + BENCH_YAW_OFFSET_DEG
+            for bench_item in bench_draw_data:
+                bpx = bench_item["x"]
+                bpz = bench_item["z"]
+                bench_yaw = bench_item["yaw"]
+                tmp_mesh = bench_item["tmp_mesh"]
+                lamp_shadow = bench_item["lamp_shadow"]
+                moon_shadow = bench_item["moon_shadow"]
+                lamp_pos_3d = bench_item["lamp_pos_3d"]
 
-                # Rotate verts like draw_scene_mesh so shadow lines up with the model
-                ry = math.radians(bench_yaw)
-                cs = math.cos(ry)
-                sn = math.sin(ry)
-                rot_vertices = []
-                for vx, vy, vz in bench_scene.vertices:
-                    rx = vx * cs + vz * sn
-                    rz = -vx * sn + vz * cs
-                    rot_vertices.append((rx, vy, rz))
-
-                class _TmpMesh:
-                    pass
-
-                tmp_mesh = _TmpMesh()
-                tmp_mesh.vertices = rot_vertices
-                tmp_mesh.groups = bench_scene.groups
-
-                plane_y = _shadow_plane_y_at((bpx, bpz))
-                # Draw lamp planar shadow then moon both fake but cheap
-                lamp_shadow = _project_mesh_to_plane_point(
-                    tmp_mesh, bpx, BENCH_GROUND_Y, bpz, lamp_pos_3d, plane_y
-                )
                 _draw_projected_lamp_shadow(
                     tmp_mesh,
                     lamp_shadow,
@@ -403,10 +418,6 @@ def main():
                     lamp_pos_3d,
                     LAMP_SPOT_CUTOFF_DEG,
                     LAMP_SHADOW_CONE_SOFT_DEG,
-                )
-
-                moon_shadow = _project_mesh_to_plane_directional(
-                    tmp_mesh, bpx, BENCH_GROUND_Y, bpz, MOON_LIGHT_DIR, plane_y
                 )
                 _draw_projected_shadow(tmp_mesh, moon_shadow, (0.0, 0.0, 0.0, SHADOW_ALPHA_MOON))
 
