@@ -12,6 +12,16 @@ from camera_controller import CameraConfig, CameraState, apply_camera_view, upda
 from lamp_effects import draw_lamp_beam_cone, draw_lamp_glow_orb, find_material_anchor_local
 from lighting_system import apply_active_lights, enforce_night_lighting_state, select_active_lamp_indices, setup_lamp_lights, setup_night_lighting
 from model_obj import draw_scene_mesh, load_glb_scene_mesh, load_scene_mesh, normalize_scene_mesh
+from moving_objects import (
+    CarState,
+    apply_car_headlights,
+    draw_car,
+    draw_random_walker,
+    init_random_walkers,
+    setup_car_headlights,
+    update_car_state,
+    update_random_walkers,
+)
 from pedestrian_system import PedestrianConfig, PedestrianState, draw_pedestrian, update_pedestrian_from_input
 from scene import draw_circuit, draw_ground, draw_skybox
 from static_objects import TREE_SITES, draw_static_trees
@@ -75,6 +85,7 @@ BENCH_COLLISION_RADIUS = 1.75
 TREE_COLLISION_RADIUS = 1.05
 COLLISION_MARGIN = 0.2
 PEDESTRIAN_TINT = (1.0, 1.0, 1.0)
+NPC_COUNT = 2
 
 
 def _shadow_plane_y_at(xz, road_rx_inner=34.0, road_rz_inner=30.0, road_width=4.0):
@@ -314,6 +325,8 @@ def main():
         spot_cutoff_deg=LAMP_SPOT_CUTOFF_DEG,
         spot_exponent=LAMP_SPOT_EXPONENT,
     )
+    car_headlight_ids = (GL_LIGHT5, GL_LIGHT6)
+    setup_car_headlights(car_headlight_ids)
 
     sky_exr = os.path.join(ASSETS_DIR, "sky.exr")
     sky_jpg = os.path.join(ASSETS_DIR, "sky.jpg")
@@ -397,6 +410,16 @@ def main():
         tz = float(tree["z"])
         blocked_circles.append((tx, tz, TREE_COLLISION_RADIUS + ped_cfg.radius + COLLISION_MARGIN))
 
+    npc_waypoints = []
+    npc_waypoints.extend(bench_positions)
+    for lx, lz in lamp_positions:
+        npc_waypoints.append((lx + 2.0, lz))
+        npc_waypoints.append((lx - 2.0, lz))
+    npc_waypoints.extend([(24.0, 28.0), (-24.0, 28.0), (24.0, -28.0), (-24.0, -28.0)])
+    npc_blocked = [(cx, cz, radius + 0.42) for cx, cz, radius in blocked_circles]
+    random_walkers = init_random_walkers(NPC_COUNT, npc_waypoints)
+    car_state = CarState()
+
     last_t = glfw.get_time()
 
     while not glfw.window_should_close(window):
@@ -427,11 +450,14 @@ def main():
 
         update_camera_from_input(window, dt, cam_state, cam_cfg)
         update_pedestrian_from_input(window, dt, ped_state, ped_cfg, blocked_circles)
+        update_random_walkers(random_walkers, dt, npc_waypoints, npc_blocked)
+        update_car_state(car_state, dt)
 
         glDepthMask(GL_FALSE)
         draw_skybox(sky_tex)
         glDepthMask(GL_TRUE)
         enforce_night_lighting_state()
+        apply_car_headlights(car_headlight_ids[0], car_headlight_ids[1], car_state)
 
         draw_ground(grass_tex, tint=GROUND_TINT)
         if ENABLE_RELIEF:
@@ -444,6 +470,7 @@ def main():
             material_to_texid=pine_mat_tex if pine_scene else None,
             obj_tint=TREE_MESH_TINT,
         )
+        draw_car(car_state, ground_y=BENCH_GROUND_Y)
 
         if ENABLE_BENCH and bench_scene is not None:
             for bench_item in bench_draw_data:
@@ -520,6 +547,8 @@ def main():
             material_to_texid=pedestrian_mat_tex,
             tint=PEDESTRIAN_TINT,
         )
+        for w in random_walkers:
+            draw_random_walker(w, now, ground_y=BENCH_GROUND_Y)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
