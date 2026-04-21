@@ -12,6 +12,7 @@ from camera_controller import CameraConfig, CameraState, apply_camera_view, upda
 from lamp_effects import draw_lamp_beam_cone, draw_lamp_glow_orb, find_material_anchor_local
 from lighting_system import apply_active_lights, enforce_night_lighting_state, select_active_lamp_indices, setup_lamp_lights, setup_night_lighting
 from model_obj import draw_scene_mesh, load_glb_scene_mesh, load_scene_mesh, normalize_scene_mesh
+from pedestrian_system import PedestrianConfig, PedestrianState, draw_pedestrian, update_pedestrian_from_input
 from scene import draw_circuit, draw_ground, draw_skybox
 from static_objects import TREE_SITES, draw_static_trees
 from terrain import draw_relief
@@ -67,6 +68,10 @@ SHADOW_ALPHA_MOON = 0.44
 # Black so alpha blend actually reads as shadow brown tint looked washed out
 SHADOW_ALPHA_LAMP = 0.72
 LAMP_SHADOW_RGB = (0.0, 0.0, 0.0)
+LAMP_COLLISION_RADIUS = 0.9
+BENCH_COLLISION_RADIUS = 1.75
+TREE_COLLISION_RADIUS = 1.05
+COLLISION_MARGIN = 0.2
 
 
 def _shadow_plane_y_at(xz, road_rx_inner=34.0, road_rz_inner=30.0, road_width=4.0):
@@ -353,6 +358,19 @@ def main():
 
     cam_cfg = CameraConfig()
     cam_state = CameraState()
+    ped_cfg = PedestrianConfig()
+    ped_state = PedestrianState()
+
+    blocked_circles = []
+    for lx, lz in lamp_positions:
+        blocked_circles.append((lx, lz, LAMP_COLLISION_RADIUS + ped_cfg.radius + COLLISION_MARGIN))
+    for bpx, bpz in bench_positions:
+        blocked_circles.append((bpx, bpz, BENCH_COLLISION_RADIUS + ped_cfg.radius + COLLISION_MARGIN))
+    for tree in tree_instances:
+        tx = float(tree["x"])
+        tz = float(tree["z"])
+        blocked_circles.append((tx, tz, TREE_COLLISION_RADIUS + ped_cfg.radius + COLLISION_MARGIN))
+
     last_t = glfw.get_time()
 
     while not glfw.window_should_close(window):
@@ -382,6 +400,7 @@ def main():
         apply_active_lights(lamp_light_ids, active_indices, lamp_positions, LAMP_LIGHT_HEIGHT)
 
         update_camera_from_input(window, dt, cam_state, cam_cfg)
+        update_pedestrian_from_input(window, dt, ped_state, ped_cfg, blocked_circles)
 
         glDepthMask(GL_FALSE)
         draw_skybox(sky_tex)
@@ -467,6 +486,8 @@ def main():
                         alpha_apex=LAMP_BEAM_ALPHA_APEX,
                     )
                     draw_lamp_glow_orb(lx, LAMP_LIGHT_HEIGHT, lz)
+
+        draw_pedestrian(ped_state, ground_y=BENCH_GROUND_Y)
 
         glfw.swap_buffers(window)
         glfw.poll_events()
