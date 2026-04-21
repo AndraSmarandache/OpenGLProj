@@ -9,7 +9,7 @@ from OpenGL.GLU import *
 @dataclass
 class CarState:
     phase: float = 0.0
-    speed: float = 0.36
+    speed: float = 0.48
     x: float = 0.0
     z: float = 0.0
     yaw_deg: float = 0.0
@@ -26,6 +26,7 @@ class RandomWalker:
     body_tint: tuple
     leg_tint: tuple
     scale: float
+    blocked_ticks: int
 
 
 def _length2(x, z):
@@ -72,12 +73,13 @@ def init_random_walkers(count, waypoints, seed=7):
                 x=float(sx),
                 z=float(sz),
                 yaw_deg=0.0,
-                speed=rng.uniform(1.35, 1.9),
+                speed=rng.uniform(1.65, 2.2),
                 target_x=float(tx),
                 target_z=float(tz),
                 body_tint=(rng.uniform(0.15, 0.35), rng.uniform(0.18, 0.42), rng.uniform(0.25, 0.58)),
                 leg_tint=(rng.uniform(0.06, 0.14), rng.uniform(0.06, 0.14), rng.uniform(0.08, 0.18)),
                 scale=rng.uniform(0.92, 1.08),
+                blocked_ticks=0,
             )
         )
     return out
@@ -92,6 +94,7 @@ def update_random_walkers(walkers, dt, waypoints, blocked_circles):
         dist2 = dx * dx + dz * dz
         if dist2 <= 0.45 * 0.45:
             w.target_x, w.target_z = random.choice(waypoints)
+            w.blocked_ticks = 0
             dx = w.target_x - w.x
             dz = w.target_z - w.z
             dist2 = dx * dx + dz * dz
@@ -109,14 +112,27 @@ def update_random_walkers(walkers, dt, waypoints, blocked_circles):
             if not _segment_hits_any_circle(w.x, w.z, nx, nz, blocked_circles):
                 w.x = nx
                 w.z = nz
+                w.blocked_ticks = 0
                 continue
-            side_x = -dir_z
-            side_z = dir_x
-            alt_x = w.x + side_x * step_len
-            alt_z = w.z + side_z * step_len
-            if not _segment_hits_any_circle(w.x, w.z, alt_x, alt_z, blocked_circles):
-                w.x = alt_x
-                w.z = alt_z
+            moved = False
+            for side_sign in (1.0, -1.0):
+                side_x = -dir_z * side_sign
+                side_z = dir_x * side_sign
+                alt_x = w.x + side_x * step_len
+                alt_z = w.z + side_z * step_len
+                if not _segment_hits_any_circle(w.x, w.z, alt_x, alt_z, blocked_circles):
+                    w.x = alt_x
+                    w.z = alt_z
+                    w.blocked_ticks = 0
+                    moved = True
+                    break
+            if not moved:
+                w.blocked_ticks += 1
+                if w.blocked_ticks >= 6:
+                    w.target_x, w.target_z = random.choice(waypoints)
+                    w.blocked_ticks = 0
+                    turn_jitter = random.uniform(-45.0, 45.0)
+                    w.yaw_deg += turn_jitter
             break
 
 
@@ -134,13 +150,13 @@ def setup_car_headlights(light_ids):
     for lid in light_ids:
         glEnable(lid)
         glLightfv(lid, GL_AMBIENT, (0.0, 0.0, 0.0, 1.0))
-        glLightfv(lid, GL_DIFFUSE, (0.75, 0.72, 0.62, 1.0))
-        glLightfv(lid, GL_SPECULAR, (0.12, 0.11, 0.08, 1.0))
+        glLightfv(lid, GL_DIFFUSE, (1.35, 1.28, 1.08, 1.0))
+        glLightfv(lid, GL_SPECULAR, (0.26, 0.23, 0.17, 1.0))
         glLightf(lid, GL_CONSTANT_ATTENUATION, 1.0)
-        glLightf(lid, GL_LINEAR_ATTENUATION, 0.08)
-        glLightf(lid, GL_QUADRATIC_ATTENUATION, 0.02)
-        glLightf(lid, GL_SPOT_CUTOFF, 24.0)
-        glLightf(lid, GL_SPOT_EXPONENT, 24.0)
+        glLightf(lid, GL_LINEAR_ATTENUATION, 0.035)
+        glLightf(lid, GL_QUADRATIC_ATTENUATION, 0.004)
+        glLightf(lid, GL_SPOT_CUTOFF, 30.0)
+        glLightf(lid, GL_SPOT_EXPONENT, 18.0)
 
 
 def apply_car_headlights(light_left, light_right, car):
@@ -158,10 +174,10 @@ def apply_car_headlights(light_left, light_right, car):
     rz = car.z + right_z * off_side + fwd_z * off_front
     glEnable(light_left)
     glLightfv(light_left, GL_POSITION, (lx, base_y, lz, 1.0))
-    glLightfv(light_left, GL_SPOT_DIRECTION, (fwd_x, -0.08, fwd_z))
+    glLightfv(light_left, GL_SPOT_DIRECTION, (fwd_x, -0.18, fwd_z))
     glEnable(light_right)
     glLightfv(light_right, GL_POSITION, (rx, base_y, rz, 1.0))
-    glLightfv(light_right, GL_SPOT_DIRECTION, (fwd_x, -0.08, fwd_z))
+    glLightfv(light_right, GL_SPOT_DIRECTION, (fwd_x, -0.18, fwd_z))
 
 
 def draw_car(car, ground_y=-1.0):
@@ -201,6 +217,18 @@ def draw_car(car, ground_y=-1.0):
         finally:
             gluDeleteQuadric(q)
         glPopMatrix()
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+    glDisable(GL_LIGHTING)
+    glColor4f(1.0, 0.96, 0.78, 0.22)
+    for sx in (-0.42, 0.42):
+        glBegin(GL_TRIANGLES)
+        glVertex3f(0.86, 0.35, sx)
+        glVertex3f(3.5, 0.15, sx - 0.34)
+        glVertex3f(3.5, 0.15, sx + 0.34)
+        glEnd()
+    glEnable(GL_LIGHTING)
+    glDisable(GL_BLEND)
     glColor3f(1.0, 1.0, 1.0)
     glPopMatrix()
 

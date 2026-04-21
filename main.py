@@ -411,7 +411,11 @@ def main():
         blocked_circles.append((tx, tz, TREE_COLLISION_RADIUS + ped_cfg.radius + COLLISION_MARGIN))
 
     npc_waypoints = []
-    npc_waypoints.extend(bench_positions)
+    for bpx, bpz in bench_positions:
+        npc_waypoints.append((bpx + 2.6, bpz))
+        npc_waypoints.append((bpx - 2.6, bpz))
+        npc_waypoints.append((bpx, bpz + 2.6))
+        npc_waypoints.append((bpx, bpz - 2.6))
     for lx, lz in lamp_positions:
         npc_waypoints.append((lx + 2.0, lz))
         npc_waypoints.append((lx - 2.0, lz))
