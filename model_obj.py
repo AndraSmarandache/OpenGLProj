@@ -261,6 +261,16 @@ def load_glb_scene_mesh(glb_path):
         blend = False
         if hasattr(vis, "material") and vis.material is not None:
             m = vis.material
+            base_color = getattr(m, "baseColorFactor", None)
+            if base_color is not None and len(base_color) >= 3:
+                c0, c1, c2 = float(base_color[0]), float(base_color[1]), float(base_color[2])
+                if max(c0, c1, c2) > 1.0:
+                    c0, c1, c2 = c0 / 255.0, c1 / 255.0, c2 / 255.0
+                material_kd[mname] = (
+                    max(0.0, min(1.0, c0)),
+                    max(0.0, min(1.0, c1)),
+                    max(0.0, min(1.0, c2)),
+                )
             if getattr(m, "baseColorTexture", None) is not None:
                 tex = m.baseColorTexture
                 pil_img = tex.copy() if hasattr(tex, "copy") else tex

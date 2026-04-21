@@ -5,6 +5,8 @@ import glfw
 from OpenGL.GL import *
 from OpenGL.GLU import *
 
+from model_obj import draw_scene_mesh
+
 
 @dataclass
 class PedestrianConfig:
@@ -93,7 +95,20 @@ def update_pedestrian_from_input(window, dt, state: PedestrianState, cfg: Pedest
         state.z = nz
 
 
-def draw_pedestrian(state: PedestrianState, ground_y=-1.0):
+def draw_pedestrian(state: PedestrianState, ground_y=-1.0, scene_mesh=None, material_to_texid=None, tint=(1.0, 1.0, 1.0)):
+    if scene_mesh is not None:
+        draw_scene_mesh(
+            scene_mesh,
+            material_to_texid or {},
+            state.x,
+            ground_y,
+            state.z,
+            tint=tint,
+            uniform_scale=1.0,
+            rotate_y_deg=state.yaw_deg,
+        )
+        return
+
     glPushMatrix()
     glTranslatef(state.x, ground_y, state.z)
     glRotatef(state.yaw_deg, 0.0, 1.0, 0.0)

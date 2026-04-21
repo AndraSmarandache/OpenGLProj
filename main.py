@@ -28,6 +28,8 @@ LAMP_POST_TINT = (0.50, 0.53, 0.60)
 
 TREE_MESH_HEIGHT = 6.5
 LAMP_POST_HEIGHT = 8.2
+PEDESTRIAN_HEIGHT = 2.05
+ENABLE_PEDESTRIAN_GLB = False
 
 LAMP_LIGHTS_MAX = 4
 LAMP_LIGHT_HEIGHT = 6.6
@@ -72,6 +74,7 @@ LAMP_COLLISION_RADIUS = 0.9
 BENCH_COLLISION_RADIUS = 1.75
 TREE_COLLISION_RADIUS = 1.05
 COLLISION_MARGIN = 0.2
+PEDESTRIAN_TINT = (1.0, 1.0, 1.0)
 
 
 def _shadow_plane_y_at(xz, road_rx_inner=34.0, road_rz_inner=30.0, road_width=4.0):
@@ -262,6 +265,24 @@ def main():
                     if tid:
                         lamp_mat_tex[mname] = int(tid)
 
+    pedestrian_scene = None
+    pedestrian_mat_tex = {}
+    if ENABLE_PEDESTRIAN_GLB:
+        pedestrian_glb = os.path.join(
+            ASSETS_DIR,
+            "character",
+            "55-rp_nathan_animated_003_walking_fbx",
+            "rp_nathan_animated_003_walking.glb",
+        )
+        if os.path.isfile(pedestrian_glb):
+            ped_glb_mesh, ped_glb_pils = load_glb_scene_mesh(pedestrian_glb)
+            if ped_glb_mesh is not None:
+                pedestrian_scene = normalize_scene_mesh(ped_glb_mesh, target_height=PEDESTRIAN_HEIGHT)
+                for mname, pil_img in ped_glb_pils.items():
+                    tid = load_texture_from_pil(pil_img)
+                    if tid:
+                        pedestrian_mat_tex[mname] = int(tid)
+
     bench_scene, bench_mat_tex = (None, {})
     if ENABLE_BENCH:
         bench_scene, bench_mat_tex = load_bench_scene(
@@ -295,7 +316,12 @@ def main():
     )
 
     sky_exr = os.path.join(ASSETS_DIR, "sky.exr")
-    sky_tex = load_texture(sky_exr) if os.path.exists(sky_exr) else load_texture(os.path.join(ASSETS_DIR, "sky.jpg"))
+    sky_jpg = os.path.join(ASSETS_DIR, "sky.jpg")
+    sky_tex = 0
+    if os.path.exists(sky_exr):
+        sky_tex = load_texture(sky_exr)
+    if not sky_tex:
+        sky_tex = load_texture(sky_jpg)
 
     tree_instances = [
         {
@@ -487,7 +513,13 @@ def main():
                     )
                     draw_lamp_glow_orb(lx, LAMP_LIGHT_HEIGHT, lz)
 
-        draw_pedestrian(ped_state, ground_y=BENCH_GROUND_Y)
+        draw_pedestrian(
+            ped_state,
+            ground_y=BENCH_GROUND_Y,
+            scene_mesh=pedestrian_scene,
+            material_to_texid=pedestrian_mat_tex,
+            tint=PEDESTRIAN_TINT,
+        )
 
         glfw.swap_buffers(window)
         glfw.poll_events()
