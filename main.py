@@ -86,6 +86,7 @@ TREE_COLLISION_RADIUS = 1.05
 COLLISION_MARGIN = 0.2
 PEDESTRIAN_TINT = (1.0, 1.0, 1.0)
 NPC_COUNT = 2
+CAR_COLLISION_RADIUS = 1.25
 
 
 def _shadow_plane_y_at(xz, road_rx_inner=34.0, road_rz_inner=30.0, road_width=4.0):
@@ -412,17 +413,19 @@ def main():
 
     npc_waypoints = []
     for bpx, bpz in bench_positions:
-        npc_waypoints.append((bpx + 2.6, bpz))
-        npc_waypoints.append((bpx - 2.6, bpz))
-        npc_waypoints.append((bpx, bpz + 2.6))
-        npc_waypoints.append((bpx, bpz - 2.6))
+        npc_waypoints.append((bpx + 3.6, bpz))
+        npc_waypoints.append((bpx - 3.6, bpz))
+        npc_waypoints.append((bpx, bpz + 3.6))
+        npc_waypoints.append((bpx, bpz - 3.6))
     for lx, lz in lamp_positions:
-        npc_waypoints.append((lx + 2.0, lz))
-        npc_waypoints.append((lx - 2.0, lz))
+        npc_waypoints.append((lx + 2.8, lz))
+        npc_waypoints.append((lx - 2.8, lz))
     npc_waypoints.extend([(24.0, 28.0), (-24.0, 28.0), (24.0, -28.0), (-24.0, -28.0)])
-    npc_blocked = [(cx, cz, radius + 0.42) for cx, cz, radius in blocked_circles]
+    npc_blocked = list(blocked_circles)
     random_walkers = init_random_walkers(NPC_COUNT, npc_waypoints)
     car_state = CarState()
+    car_hit_cooldown = 0.0
+    player_hit_flash = 0.0
 
     last_t = glfw.get_time()
 
@@ -456,6 +459,23 @@ def main():
         update_pedestrian_from_input(window, dt, ped_state, ped_cfg, blocked_circles)
         update_random_walkers(random_walkers, dt, npc_waypoints, npc_blocked)
         update_car_state(car_state, dt)
+        if car_hit_cooldown > 0.0:
+            car_hit_cooldown = max(0.0, car_hit_cooldown - dt)
+        if player_hit_flash > 0.0:
+            player_hit_flash = max(0.0, player_hit_flash - dt)
+
+        dx_pc = ped_state.x - car_state.x
+        dz_pc = ped_state.z - car_state.z
+        hit_r = ped_cfg.radius + CAR_COLLISION_RADIUS
+        if car_hit_cooldown <= 0.0 and (dx_pc * dx_pc + dz_pc * dz_pc) <= (hit_r * hit_r):
+            push_len = math.sqrt(max(1e-8, dx_pc * dx_pc + dz_pc * dz_pc))
+            push_x = dx_pc / push_len
+            push_z = dz_pc / push_len
+            ped_state.x += push_x * 1.15
+            ped_state.z += push_z * 1.15
+            ped_state.yaw_deg = math.degrees(math.atan2(push_x, push_z))
+            car_hit_cooldown = 0.9
+            player_hit_flash = 0.28
 
         glDepthMask(GL_FALSE)
         draw_skybox(sky_tex)
@@ -551,6 +571,24 @@ def main():
             material_to_texid=pedestrian_mat_tex,
             tint=PEDESTRIAN_TINT,
         )
+        if player_hit_flash > 0.0:
+            glDisable(GL_LIGHTING)
+            glDisable(GL_TEXTURE_2D)
+            glEnable(GL_BLEND)
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+            glColor4f(1.0, 0.2, 0.2, 0.35)
+            glPushMatrix()
+            glTranslatef(ped_state.x, BENCH_GROUND_Y + 0.02, ped_state.z)
+            q = gluNewQuadric()
+            try:
+                glRotatef(-90.0, 1.0, 0.0, 0.0)
+                gluDisk(q, 0.0, 0.95, 20, 1)
+            finally:
+                gluDeleteQuadric(q)
+            glPopMatrix()
+            glDisable(GL_BLEND)
+            glEnable(GL_LIGHTING)
+            glColor3f(1.0, 1.0, 1.0)
         for w in random_walkers:
             draw_random_walker(w, now, ground_y=BENCH_GROUND_Y)
 
