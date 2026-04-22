@@ -31,10 +31,16 @@ def _load_texture_exr(path):
     h, w = arr.shape[0], arr.shape[1]
     # Tonemap HDR then convert to uint8 for OpenGL
     if arr.dtype in (np.float32, np.float64):
-        if arr.max() > 1.0:
-            arr = arr / (1.0 + arr)
-        arr = np.clip(arr, 0, 1)
-    arr = (arr * 255).astype(np.uint8)
+        try:
+            if arr.max() > 1.0:
+                arr = arr / (1.0 + arr)
+            arr = np.clip(arr, 0, 1)
+            arr = (arr * 255).astype(np.uint8)
+        except MemoryError:
+            print(f"EXR too large for memory, fallback needed: {path}")
+            return None, None, None
+    else:
+        arr = arr.astype(np.uint8, copy=False)
     arr = np.ascontiguousarray(arr[::-1, :, :])
     return w, h, arr.tobytes()
 
@@ -50,10 +56,21 @@ def load_texture(path):
             return 0
         w, h, img_data = result
     else:
-        img = Image.open(path)
-        img = img.transpose(Image.FLIP_TOP_BOTTOM)
-        img_data = img.convert("RGB").tobytes()
-        w, h = img.width, img.height
+        try:
+            img = Image.open(path)
+            max_side = 1024
+            try:
+                w0, h0 = img.size
+                if max(w0, h0) > max_side:
+                    img.thumbnail((max_side, max_side), Image.Resampling.BILINEAR)
+            except Exception:
+                pass
+            img = img.transpose(Image.FLIP_TOP_BOTTOM)
+            img_data = img.convert("RGB").tobytes()
+            w, h = img.width, img.height
+        except MemoryError:
+            print(f"Texture skipped due to low memory: {path}")
+            return 0
     
     tex_id = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, tex_id)

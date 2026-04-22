@@ -12,10 +12,10 @@ def setup_night_lighting():
 
     # Moon mostly from -X a bit up so sideways light lamp stays more overhead
     glLightfv(GL_LIGHT0, GL_POSITION, (-0.92, 0.38, 0.08, 0.0))
-    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.062, 0.07, 0.098, 1.0))
-    glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.21, 0.24, 0.34, 1.0))
+    glLightfv(GL_LIGHT0, GL_AMBIENT, (0.095, 0.105, 0.14, 1.0))
+    glLightfv(GL_LIGHT0, GL_DIFFUSE, (0.31, 0.35, 0.48, 1.0))
     glLightfv(GL_LIGHT0, GL_SPECULAR, (0.03, 0.036, 0.048, 1.0))
-    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, (0.028, 0.032, 0.045, 1.0))
+    glLightModelfv(GL_LIGHT_MODEL_AMBIENT, (0.05, 0.057, 0.078, 1.0))
 
 
 def setup_lamp_lights(
