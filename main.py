@@ -1,4 +1,4 @@
-﻿"""Night outdoor scene with modular camera, lighting, and benches"""
+"""Night outdoor scene with modular camera, lighting, and benches"""
 
 import math
 import os
@@ -458,7 +458,7 @@ def main():
         update_camera_from_input(window, dt, cam_state, cam_cfg)
         update_pedestrian_from_input(window, dt, ped_state, ped_cfg, blocked_circles)
         update_random_walkers(random_walkers, dt, npc_waypoints, npc_blocked)
-        update_car_state(car_state, dt)
+        update_car_state(car_state, dt, rx=36.2, rz=32.2)
         if car_hit_cooldown > 0.0:
             car_hit_cooldown = max(0.0, car_hit_cooldown - dt)
         if player_hit_flash > 0.0:

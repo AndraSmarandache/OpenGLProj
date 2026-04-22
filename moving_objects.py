@@ -8,7 +8,7 @@ from OpenGL.GLU import *
 
 @dataclass
 class CarState:
-    phase: float = 0.0
+    phase: float = math.pi * 0.5
     speed: float = 0.48
     x: float = 0.0
     z: float = 0.0
@@ -114,25 +114,17 @@ def update_random_walkers(walkers, dt, waypoints, blocked_circles):
                 w.z = nz
                 w.blocked_ticks = 0
                 continue
-            moved = False
-            for side_sign in (1.0, -1.0):
-                side_x = -dir_z * side_sign
-                side_z = dir_x * side_sign
-                alt_x = w.x + side_x * step_len
-                alt_z = w.z + side_z * step_len
-                if not _segment_hits_any_circle(w.x, w.z, alt_x, alt_z, blocked_circles):
-                    w.x = alt_x
-                    w.z = alt_z
-                    w.blocked_ticks = 0
-                    moved = True
-                    break
-            if not moved:
-                w.blocked_ticks += 1
-                if w.blocked_ticks >= 6:
-                    w.target_x, w.target_z = random.choice(waypoints)
-                    w.blocked_ticks = 0
-                    turn_jitter = random.uniform(-45.0, 45.0)
-                    w.yaw_deg += turn_jitter
+            back_x = w.x - dir_x * step_len
+            back_z = w.z - dir_z * step_len
+            if not _segment_hits_any_circle(w.x, w.z, back_x, back_z, blocked_circles):
+                w.x = back_x
+                w.z = back_z
+            w.blocked_ticks += 1
+            turn_sign = random.choice((-1.0, 1.0))
+            w.yaw_deg += 180.0 * turn_sign
+            w.target_x, w.target_z = random.choice(waypoints)
+            if w.blocked_ticks >= 4:
+                w.blocked_ticks = 0
             break
 
 
@@ -187,13 +179,13 @@ def draw_car(car, ground_y=-1.0):
     glDisable(GL_TEXTURE_2D)
     glMaterialfv(GL_FRONT_AND_BACK, GL_SPECULAR, (0.16, 0.16, 0.16, 1.0))
     glMaterialf(GL_FRONT_AND_BACK, GL_SHININESS, 24.0)
-    glColor3f(0.20, 0.24, 0.36)
+    glColor3f(0.34, 0.38, 0.56)
     glPushMatrix()
     glTranslatef(0.0, 0.38, 0.0)
     glScalef(1.8, 0.42, 0.84)
     _draw_unit_box()
     glPopMatrix()
-    glColor3f(0.09, 0.10, 0.14)
+    glColor3f(0.16, 0.18, 0.24)
     glPushMatrix()
     glTranslatef(0.06, 0.62, 0.0)
     glScalef(1.0, 0.34, 0.72)

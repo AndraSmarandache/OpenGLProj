@@ -89,7 +89,27 @@ def update_pedestrian_from_input(window, dt, state: PedestrianState, cfg: Pedest
             break
 
         if segment_hits_any_circle(state.x, state.z, nx, nz, blocked_circles):
-            break
+            move_dx = nx - state.x
+            move_dz = nz - state.z
+            move_len = math.sqrt(move_dx * move_dx + move_dz * move_dz)
+            if move_len <= 1e-8:
+                break
+            dir_x = move_dx / move_len
+            dir_z = move_dz / move_len
+            moved = False
+            for side_sign in (1.0, -1.0):
+                side_x = -dir_z * side_sign
+                side_z = dir_x * side_sign
+                sx = state.x + side_x * move_len
+                sz = state.z + side_z * move_len
+                if not segment_hits_any_circle(state.x, state.z, sx, sz, blocked_circles):
+                    state.x = sx
+                    state.z = sz
+                    moved = True
+                    break
+            if not moved:
+                break
+            continue
 
         state.x = nx
         state.z = nz
