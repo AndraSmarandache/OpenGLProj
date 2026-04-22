@@ -1,4 +1,4 @@
-"""Night outdoor scene with modular camera, lighting, and benches"""
+﻿"""Night outdoor scene with modular camera, lighting, and benches"""
 
 import math
 import os
@@ -31,8 +31,8 @@ from textures import load_texture, load_texture_from_pil
 _ASSET_ROOT = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(_ASSET_ROOT, "assets")
 
-GROUND_TINT = (0.36, 0.40, 0.46)
-ROAD_TINT = (0.40, 0.42, 0.49)
+GROUND_TINT = (0.40, 0.44, 0.50)
+ROAD_TINT = (0.44, 0.46, 0.53)
 TREE_MESH_TINT = (0.26, 0.30, 0.38)
 LAMP_POST_TINT = (0.50, 0.53, 0.60)
 
@@ -43,7 +43,7 @@ ENABLE_PEDESTRIAN_GLB = False
 
 LAMP_LIGHTS_MAX = 4
 LAMP_LIGHT_HEIGHT = 6.6
-LAMP_LIGHT_DIFFUSE_STRENGTH = (10.5, 8.6, 5.2)
+LAMP_LIGHT_DIFFUSE_STRENGTH = (13.8, 11.2, 6.8)
 LAMP_LIGHT_ATTENUATION_LINEAR = 0.022
 LAMP_LIGHT_ATTENUATION_QUAD = 0.0022
 LAMP_GLOW_Y_BIAS = 0.04
