@@ -31,10 +31,10 @@ from textures import load_texture, load_texture_from_pil
 _ASSET_ROOT = os.path.dirname(os.path.abspath(__file__))
 ASSETS_DIR = os.path.join(_ASSET_ROOT, "assets")
 
-GROUND_TINT = (0.40, 0.44, 0.50)
-ROAD_TINT = (0.44, 0.46, 0.53)
-TREE_MESH_TINT = (0.26, 0.30, 0.38)
-LAMP_POST_TINT = (0.50, 0.53, 0.60)
+GROUND_TINT = (0.62, 0.66, 0.72)
+ROAD_TINT = (0.66, 0.68, 0.74)
+TREE_MESH_TINT = (0.44, 0.50, 0.60)
+LAMP_POST_TINT = (0.70, 0.73, 0.80)
 
 TREE_MESH_HEIGHT = 6.5
 LAMP_POST_HEIGHT = 8.2
@@ -236,7 +236,7 @@ def main():
     if not glfw.init():
         return
 
-    window = glfw.create_window(1200, 800, "OpenGL Project : Task P1", None, None)
+    window = glfw.create_window(1200, 800, "Night Scene – OpenGL", None, None)
     if not window:
         glfw.terminate()
         return
